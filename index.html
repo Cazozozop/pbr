@@ -56,7 +56,6 @@
           const len = Math.sqrt(dx*dx + dy*dy + dz*dz);
           const nx = dx/len, ny = dy/len, nz = dz/len;
 
-          // Encode normal in RGB
           dst.data[i] = (nx * 0.5 + 0.5) * 255;
           dst.data[i+1] = (ny * 0.5 + 0.5) * 255;
           dst.data[i+2] = (nz * 0.5 + 0.5) * 255;
@@ -66,11 +65,21 @@
       return dst;
     }
 
+    function normalize(v) {
+      const len = Math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+      return [v[0]/len, v[1]/len, v[2]/len];
+    }
+
     function applyLighting(canvas, normalMapData, lightDir = [-0.5, -0.5, 1]) {
       const w = canvas.width, h = canvas.height;
-      const ctx = canvas.getContext("2d");
-      const imgData = ctx.getImageData(0, 0, w, h);
       const light = normalize(lightDir);
+
+      const offCanvas = document.createElement("canvas");
+      offCanvas.width = w;
+      offCanvas.height = h;
+      const offCtx = offCanvas.getContext("2d");
+      offCtx.drawImage(canvas, 0, 0);
+      const imgData = offCtx.getImageData(0, 0, w, h);
 
       for (let i = 0; i < imgData.data.length; i += 4) {
         const r = normalMapData.data[i];
@@ -84,21 +93,15 @@
         const ny = g / 255 * 2 - 1;
         const nz = b / 255 * 2 - 1;
 
-        const dot = Math.max(0, nx * light[0] + ny * light[1] + nz * light[2]);
+        const dot = Math.max(0.3, nx * light[0] + ny * light[1] + nz * light[2]); // 0.3 min lumière
 
         imgData.data[i] *= dot;
         imgData.data[i+1] *= dot;
         imgData.data[i+2] *= dot;
-        // alpha reste pareil
       }
 
-      ctx.putImageData(imgData, 0, 0);
-      return canvas;
-    }
-
-    function normalize(v) {
-      const len = Math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
-      return [v[0]/len, v[1]/len, v[2]/len];
+      offCtx.putImageData(imgData, 0, 0);
+      return offCanvas;
     }
 
     async function extractFiles(fileList) {
@@ -141,9 +144,8 @@
         const name = file.name.replace(/\.\w+$/, "");
         const canvas = upscale(img);
 
-        const ctx = canvas.getContext("2d");
         const normalMap = generateNormalMap(canvas);
-        const litCanvas = applyLighting(canvas.cloneNode(true), normalMap);
+        const litCanvas = applyLighting(canvas, normalMap);
 
         const blobOriginal = await new Promise(res => canvas.toBlob(res, "image/png"));
         const blobRelief = await new Promise(res => litCanvas.toBlob(res, "image/png"));
