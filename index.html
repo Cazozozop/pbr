@@ -2,14 +2,15 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <title>Convertisseur PBR - Relief</title>
+  <title>Convertisseur PBR - ZIP & Images</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.0/jszip.min.js"></script>
 </head>
 <body style="font-family:sans-serif;background:#111;color:#fff;text-align:center;padding:20px;">
   <h1>🖼️ Convertisseur PBR avec effet de relief</h1>
-  <input type="file" id="input" multiple accept="image/*"><br><br>
-  <progress id="progress" value="0" max="1" style="width:50%;display:none;"></progress><br><br>
-  <button id="start">📦 Convertir et Télécharger le ZIP</button>
+  <p>Importe jusqu’à 5000 images (ou un .zip d’images)</p>
+  <input type="file" id="input" multiple accept=".zip,image/*"><br><br>
+  <progress id="progress" value="0" max="1" style="width:70%;display:none;"></progress><br><br>
+  <button id="start">📦 Convertir et Télécharger</button>
 
   <script>
     const input = document.getElementById("input");
@@ -17,13 +18,18 @@
     const progress = document.getElementById("progress");
 
     function upscale(img, scale = 4) {
-      const w = img.width * scale, h = img.height * scale;
       const canvas = document.createElement("canvas");
-      canvas.width = w; canvas.height = h;
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
       const ctx = canvas.getContext("2d");
       ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(img, 0, 0, w, h);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       return canvas;
+    }
+
+    function getLum(data, x, y, w) {
+      const i = (y * w + x) * 4;
+      return (data[i] + data[i + 1] + data[i + 2]) / 3 / 255;
     }
 
     function generateNormalMap(canvas) {
@@ -35,60 +41,89 @@
       for (let y = 1; y < h - 1; y++) {
         for (let x = 1; x < w - 1; x++) {
           const i = (y * w + x) * 4;
-          const sx = (getLum(src, x + 1, y) - getLum(src, x - 1, y)) / 2;
-          const sy = (getLum(src, x, y + 1) - getLum(src, x, y - 1)) / 2;
-          const sz = 1;
-          const len = Math.sqrt(sx * sx + sy * sy + sz * sz);
-          const r = (sx / len * 0.5 + 0.5) * 255;
-          const g = (sy / len * 0.5 + 0.5) * 255;
-          const b = (sz / len * 0.5 + 0.5) * 255;
-          dst.data[i] = r; dst.data[i+1] = g; dst.data[i+2] = b; dst.data[i+3] = 255;
+          const dx = getLum(src.data, x + 1, y, w) - getLum(src.data, x - 1, y, w);
+          const dy = getLum(src.data, x, y + 1, w) - getLum(src.data, x, y - 1, w);
+          const dz = 1;
+          const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          const r = (dx / len * 0.5 + 0.5) * 255;
+          const g = (dy / len * 0.5 + 0.5) * 255;
+          const b = (dz / len * 0.5 + 0.5) * 255;
+          dst.data[i] = r;
+          dst.data[i + 1] = g;
+          dst.data[i + 2] = b;
+          dst.data[i + 3] = 255;
         }
       }
       ctx.putImageData(dst, 0, 0);
       return canvas;
     }
 
-    function getLum(imgData, x, y) {
-      const i = (y * imgData.width + x) * 4;
-      const r = imgData.data[i], g = imgData.data[i+1], b = imgData.data[i+2];
-      return (r + g + b) / 3 / 255;
+    async function processImageFile(file, zipOut, i, total) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = async () => {
+          let canvas = upscale(img);
+          canvas = generateNormalMap(canvas);
+          canvas.toBlob((blob) => {
+            zipOut.file(file.name.replace(/\.\w+$/, "_PBR.png"), blob);
+            URL.revokeObjectURL(url);
+            progress.value = (i + 1) / total;
+            resolve();
+          }, "image/png");
+        };
+        img.src = url;
+      });
     }
 
-    button.onclick = async () => {
-      const files = input.files;
-      if (!files.length || files.length > 5000) {
-        alert("Importe entre 1 et 5000 images.");
+    async function handleFiles(files) {
+      progress.style.display = "block";
+      const zipOut = new JSZip();
+      let allImages = [];
+
+      for (const file of files) {
+        if (file.name.endsWith(".zip")) {
+          const zip = await JSZip.loadAsync(file);
+          const entries = Object.values(zip.files).filter(f => !f.dir && /\.(png|jpg|jpeg)$/i.test(f.name));
+          for (const entry of entries) {
+            const blob = await entry.async("blob");
+            const imageFile = new File([blob], entry.name, { type: blob.type });
+            allImages.push(imageFile);
+          }
+        } else if (file.type.startsWith("image/")) {
+          allImages.push(file);
+        }
+      }
+
+      if (allImages.length === 0) {
+        alert("Aucune image trouvée.");
+        return;
+      }
+      if (allImages.length > 5000) {
+        alert("Maximum 5000 images !");
         return;
       }
 
-      progress.style.display = "block";
-      const zip = new JSZip();
-
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const img = new Image();
-        const url = URL.createObjectURL(file);
-        img.src = url;
-        await img.decode();
-
-        let canvas = upscale(img);
-        canvas = generateNormalMap(canvas);
-
-        const blob = await new Promise(res => canvas.toBlob(res, "image/png"));
-        zip.file(file.name.replace(/\.\w+$/, "_PBR.png"), blob);
-        progress.value = i / files.length;
+      for (let i = 0; i < allImages.length; i++) {
+        await processImageFile(allImages[i], zipOut, i, allImages.length);
       }
 
-      zip.generateAsync({ type: "blob" }).then(blob => {
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(blob);
-        link.download = "converted_pbr_images.zip";
-        link.click();
-      }).finally(() => {
-        progress.value = 1;
-        setTimeout(() => progress.style.display = "none", 1000);
-      });
+      const zipBlob = await zipOut.generateAsync({ type: "blob" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(zipBlob);
+      link.download = "images_PBR_converties.zip";
+      link.click();
+
+      progress.value = 1;
+      setTimeout(() => progress.style.display = "none", 2000);
+    }
+
+    button.onclick = () => {
+      if (!input.files.length) {
+        alert("Ajoute des images ou un fichier ZIP !");
+        return;
+      }
+      handleFiles(input.files);
     };
   </script>
 </body>
