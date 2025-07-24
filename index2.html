@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Nettoyeur de noms de fichiers ZIP</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.0/jszip.min.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+      padding: 20px;
+      background-color: #f4f4f4;
+      color: #333;
+    }
+    .container {
+      max-width: 600px;
+      margin: 40px auto;
+      background: #fff;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    }
+    input[type="file"] {
+      margin-bottom: 20px;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+    button {
+      background-color: #007bff;
+      color: white;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 16px;
+      margin: 5px;
+      transition: background-color 0.3s ease;
+    }
+    button:hover:not(:disabled) {
+      background-color: #0056b3;
+    }
+    button:disabled {
+      background-color: #cccccc;
+      cursor: not-allowed;
+    }
+    progress {
+      width: 80%;
+      height: 25px;
+      -webkit-appearance: none;
+      appearance: none;
+      border: none;
+      border-radius: 5px;
+      overflow: hidden;
+      display: none; /* Hidden by default */
+      margin: 20px auto;
+    }
+    progress::-webkit-progress-bar {
+      background-color: #e0e0e0;
+    }
+    progress::-webkit-progress-value {
+      background-color: #28a745;
+      transition: width 0.1s linear;
+    }
+    progress::-moz-progress-bar {
+      background-color: #28a745;
+    }
+    #fileList {
+      text-align: left;
+      margin-top: 20px;
+      border-top: 1px solid #eee;
+      padding-top: 15px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    #fileList h3 {
+      color: #555;
+      margin-bottom: 10px;
+    }
+    #fileList ul {
+      list-style-type: none;
+      padding: 0;
+    }
+    #fileList li {
+      background: #f9f9f9;
+      border: 1px solid #eee;
+      margin-bottom: 5px;
+      padding: 8px;
+      border-radius: 3px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.9em;
+    }
+    .original-name {
+      text-decoration: line-through;
+      color: #888;
+      margin-right: 10px;
+    }
+    .new-name {
+      font-weight: bold;
+      color: #007bff;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Renommer les fichiers ZIP (supprimer "_relief")</h1>
+
+    <input type="file" id="zipInput" accept=".zip">
+    <button id="processZipBtn" disabled>Traiter le ZIP</button>
+
+    <progress id="progressBar" value="0"></progress>
+
+    <button id="downloadZipBtn" disabled>Télécharger le ZIP modifié</button>
+
+    <div id="fileList">
+      <h3>Noms des fichiers (Ancien &#8594; Nouveau) :</h3>
+      <ul id="fileNameList">
+              </ul>
+    </div>
+  </div>
+
+  <script>
+    const zipInput = document.getElementById('zipInput');
+    const processZipBtn = document.getElementById('processZipBtn');
+    const progressBar = document.getElementById('progressBar');
+    const downloadZipBtn = document.getElementById('downloadZipBtn');
+    const fileNameList = document.getElementById('fileNameList');
+
+    let processedZipBlob = null; // Pour stocker le Blob du ZIP modifié
+
+    // Active le bouton "Traiter le ZIP" quand un fichier est sélectionné
+    zipInput.addEventListener('change', () => {
+      if (zipInput.files.length > 0) {
+        processZipBtn.disabled = false;
+        downloadZipBtn.disabled = true; // Désactive le téléchargement tant que non traité
+        progressBar.style.display = 'none'; // Cache la barre si un nouveau fichier est sélectionné
+        fileNameList.innerHTML = ''; // Vide la liste des fichiers
+      } else {
+        processZipBtn.disabled = true;
+      }
+    });
+
+    processZipBtn.addEventListener('click', async () => {
+      const file = zipInput.files[0];
+      if (!file) {
+        alert('Veuillez sélectionner un fichier ZIP.');
+        return;
+      }
+
+      processZipBtn.disabled = true;
+      downloadZipBtn.disabled = true;
+      progressBar.value = 0;
+      progressBar.style.display = 'block'; // Affiche la barre de progression
+      fileNameList.innerHTML = ''; // Vide la liste pour un nouveau traitement
+
+      try {
+        const zip = await JSZip.loadAsync(file);
+        const newZip = new JSZip();
+
+        const totalFiles = Object.keys(zip.files).length;
+        let processedCount = 0;
+
+        // Parcourt chaque fichier dans le ZIP original
+        for (const [relativePath, zipEntry] of Object.entries(zip.files)) {
+          // Ne traite que les fichiers (pas les dossiers)
+          if (!zipEntry.dir) {
+            const originalName = relativePath;
+            let newName = originalName.replace(/_relief/g, ''); // Supprime toutes les occurrences de "_relief"
+
+            // Ajoute le fichier au nouveau ZIP avec le nouveau nom
+            const content = await zipEntry.async('blob'); // Récupère le contenu sous forme de Blob
+            newZip.file(newName, content);
+
+            // Met à jour la liste des noms de fichiers pour l'affichage
+            const listItem = document.createElement('li');
+            listItem.innerHTML = `<span class="original-name">${originalName}</span> &#8594; <span class="new-name">${newName}</span>`;
+            fileNameList.appendChild(listItem);
+          } else {
+            // Si c'est un dossier, l'ajouter au nouveau ZIP tel quel
+            newZip.folder(relativePath);
+          }
+
+          processedCount++;
+          progressBar.value = processedCount / totalFiles; // Met à jour la progression
+        }
+
+        // Génère le nouveau fichier ZIP
+        processedZipBlob = await newZip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+        
+        progressBar.value = 1; // Assure que la barre est à 100%
+        downloadZipBtn.disabled = false; // Active le bouton de téléchargement
+        alert('Traitement terminé ! Vous pouvez télécharger le ZIP modifié.');
+
+      } catch (error) {
+        console.error('Erreur lors du traitement du ZIP :', error);
+        alert('Une erreur est survenue lors du traitement du fichier ZIP. Veuillez vérifier qu\'il est valide.');
+        progressBar.style.display = 'none';
+      } finally {
+        processZipBtn.disabled = false; // Réactive le bouton "Traiter" pour permettre un nouveau traitement
+      }
+    });
+
+    // Gère le téléchargement du ZIP modifié
+    downloadZipBtn.addEventListener('click', () => {
+      if (processedZipBlob) {
+        const url = URL.createObjectURL(processedZipBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'archive_modifiee.zip'; // Nom du fichier ZIP à télécharger
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url); // Libère l'URL de l'objet
+      } else {
+        alert('Aucun fichier ZIP modifié à télécharger.');
+      }
+    });
+  </script>
+</body>
+</html>
