@@ -2,181 +2,173 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <title>Convertisseur PBR visuel (relief)</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.0/jszip.min.js"></script>
+  <title>Convertisseur PBR</title>
+  <style>
+    body { font-family: sans-serif; background: #111; color: #eee; padding: 20px; }
+    input, button, select { margin: 5px 0; }
+    canvas { image-rendering: pixelated; }
+    .preview { display: flex; gap: 10px; margin: 10px 0; }
+    .bar { width: 100%; height: 10px; background: #444; margin: 10px 0; }
+    .fill { height: 100%; width: 0%; background: #0f0; }
+  </style>
 </head>
-<body style="background:#111;color:white;font-family:sans-serif;text-align:center;padding:20px">
-  <h1>🖼️ Convertisseur PBR visuel (relief appliqué)</h1>
-  <input type="file" id="input" multiple accept=".zip,image/*"><br><br>
-  <progress id="progress" value="0" max="1" style="width:70%;display:none;"></progress><br><br>
-  <button id="start">⚙️ Convertir les images</button><br><br>
-  <button id="download-original" disabled>📥 Télécharger images agrandies</button>
-  <button id="download-relief" disabled>📥 Télécharger images avec relief</button>
+<body>
+  <h2>🖼️ Convertisseur PBR avec relief</h2>
 
+  <input type="file" id="zipInput" accept=".zip" />
+  <div class="bar"><div id="progressBar" class="fill"></div></div>
+
+  <button id="startBtn" disabled>Commencer la conversion</button>
+
+  <div>
+    <label>Direction de la lumière (angle°)</label><br>
+    <input type="range" id="lightDir" min="0" max="360" value="45">
+  </div>
+
+  <div>
+    <label>Intensité du relief</label><br>
+    <input type="range" id="depth" min="-10" max="10" value="0">
+  </div>
+
+  <div>
+    <label>Couleur de la lumière</label><br>
+    <input type="color" id="lightColor" value="#ffffff">
+  </div>
+
+  <div>
+    <label>Transparence lumière (%)</label><br>
+    <input type="range" id="lightAlpha" min="0" max="50" value="0">
+  </div>
+
+  <h3>🔍 Aperçu avant-après</h3>
+  <div class="preview">
+    <img src="https://i.imgur.com/tGbaZCY.png" width="128" height="128" style="background:#000">
+    <canvas id="previewCanvas" width="128" height="128" style="background:#000"></canvas>
+  </div>
+
+  <button id="downloadModified" disabled>Télécharger images PBR</button>
+  <button id="downloadOriginals" disabled>Télécharger normal maps seules</button>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
   <script>
-    const input = document.getElementById("input");
-    const progress = document.getElementById("progress");
-    const startBtn = document.getElementById("start");
-    const btnOriginal = document.getElementById("download-original");
-    const btnRelief = document.getElementById("download-relief");
+    const zipInput = document.getElementById('zipInput');
+    const progressBar = document.getElementById('progressBar');
+    const previewCanvas = document.getElementById('previewCanvas');
+    const ctx = previewCanvas.getContext('2d');
+    let originalImages = [];
+    let pbrImages = [];
+    let normalsOnly = [];
 
-    function upscale(img, scale = 4) {
+    const getRelief = (img, angleDeg, depth, lightCol, alpha) => {
       const canvas = document.createElement("canvas");
-      canvas.width = img.width * scale;
-      canvas.height = img.height * scale;
       const ctx = canvas.getContext("2d");
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0);
+
+      const src = ctx.getImageData(0, 0, img.width, img.height);
+      const dst = ctx.createImageData(src);
+      const a = (angleDeg * Math.PI) / 180;
+      const lx = Math.cos(a), ly = Math.sin(a);
+
+      for (let y = 1; y < img.height - 1; y++) {
+        for (let x = 1; x < img.width - 1; x++) {
+          const i = (y * img.width + x) * 4;
+          const gx = ((src.data[i - 4] & 0xff) - (src.data[i + 4] & 0xff)) * depth;
+          const gy = ((src.data[i - img.width * 4] & 0xff) - (src.data[i + img.width * 4] & 0xff)) * depth;
+          let light = 128 + gx * lx + gy * ly;
+          light = Math.min(255, Math.max(0, light));
+
+          dst.data[i] = (src.data[i] + lightCol[0] * light / 255) / 2;
+          dst.data[i + 1] = (src.data[i + 1] + lightCol[1] * light / 255) / 2;
+          dst.data[i + 2] = (src.data[i + 2] + lightCol[2] * light / 255) / 2;
+          dst.data[i + 3] = Math.max(0, src.data[i + 3] - alpha * 5);
+        }
+      }
+
+      ctx.putImageData(dst, 0, 0);
       return canvas;
-    }
+    };
 
-    function getLum(data, x, y, w) {
-      const i = (y * w + x) * 4;
-      return (data[i] + data[i+1] + data[i+2]) / 3 / 255;
-    }
+    zipInput.addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const zip = await JSZip.loadAsync(file);
+      let files = Object.values(zip.files).filter(f => /\.(png|jpg|jpeg)$/i.test(f.name));
+      progressBar.style.width = "0%";
+      let done = 0;
+      originalImages = [];
 
-    function generateNormalMap(canvas) {
-      const w = canvas.width, h = canvas.height;
-      const ctx = canvas.getContext("2d");
-      const src = ctx.getImageData(0, 0, w, h);
-      const dst = ctx.createImageData(w, h);
-
-      for (let y = 1; y < h - 1; y++) {
-        for (let x = 1; x < w - 1; x++) {
-          const i = (y * w + x) * 4;
-          const alpha = src.data[i+3];
-          if (alpha < 10) {
-            dst.data.set([0,0,0,0], i);
-            continue;
-          }
-
-          const dx = getLum(src.data, x+1, y, w) - getLum(src.data, x-1, y, w);
-          const dy = getLum(src.data, x, y+1, w) - getLum(src.data, x, y-1, w);
-          const dz = 1;
-          const len = Math.sqrt(dx*dx + dy*dy + dz*dz);
-          const nx = dx/len, ny = dy/len, nz = dz/len;
-
-          dst.data[i] = (nx * 0.5 + 0.5) * 255;
-          dst.data[i+1] = (ny * 0.5 + 0.5) * 255;
-          dst.data[i+2] = (nz * 0.5 + 0.5) * 255;
-          dst.data[i+3] = alpha;
-        }
-      }
-      return dst;
-    }
-
-    function normalize(v) {
-      const len = Math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
-      return [v[0]/len, v[1]/len, v[2]/len];
-    }
-
-    function applyLighting(canvas, normalMapData, lightDir = [-0.5, -0.5, 1]) {
-      const w = canvas.width, h = canvas.height;
-      const light = normalize(lightDir);
-
-      const offCanvas = document.createElement("canvas");
-      offCanvas.width = w;
-      offCanvas.height = h;
-      const offCtx = offCanvas.getContext("2d");
-      offCtx.drawImage(canvas, 0, 0);
-      const imgData = offCtx.getImageData(0, 0, w, h);
-
-      for (let i = 0; i < imgData.data.length; i += 4) {
-        const r = normalMapData.data[i];
-        const g = normalMapData.data[i + 1];
-        const b = normalMapData.data[i + 2];
-        const a = normalMapData.data[i + 3];
-
-        if (a < 10) continue;
-
-        const nx = r / 255 * 2 - 1;
-        const ny = g / 255 * 2 - 1;
-        const nz = b / 255 * 2 - 1;
-
-        const dot = Math.max(0.3, nx * light[0] + ny * light[1] + nz * light[2]); // 0.3 min lumière
-
-        imgData.data[i] *= dot;
-        imgData.data[i+1] *= dot;
-        imgData.data[i+2] *= dot;
-      }
-
-      offCtx.putImageData(imgData, 0, 0);
-      return offCanvas;
-    }
-
-    async function extractFiles(fileList) {
-      let images = [];
-      for (const file of fileList) {
-        if (file.name.endsWith(".zip")) {
-          const zip = await JSZip.loadAsync(file);
-          const entries = Object.values(zip.files).filter(f => !f.dir && /\.(png|jpe?g)$/i.test(f.name));
-          for (const entry of entries) {
-            const blob = await entry.async("blob");
-            images.push(new File([blob], entry.name, { type: blob.type }));
-          }
-        } else if (file.type.startsWith("image/")) {
-          images.push(file);
-        }
-      }
-      return images.slice(0, 5000);
-    }
-
-    async function loadImage(file) {
-      return new Promise(resolve => {
+      for (let f of files) {
+        const blob = await f.async("blob");
         const img = new Image();
-        img.onload = () => resolve(img);
-        img.src = URL.createObjectURL(file);
-      });
-    }
+        const url = URL.createObjectURL(blob);
+        await new Promise(res => {
+          img.onload = () => {
+            originalImages.push({ name: f.name, img });
+            URL.revokeObjectURL(url);
+            progressBar.style.width = `${++done / files.length * 100}%`;
+            res();
+          };
+          img.src = url;
+        });
+      }
+      document.getElementById("startBtn").disabled = false;
+    });
 
-    startBtn.onclick = async () => {
-      if (!input.files.length) return alert("Ajoute des images ou un zip !");
-      progress.style.display = "block";
-      progress.value = 0;
+    document.getElementById("startBtn").onclick = async () => {
+      const angle = +document.getElementById("lightDir").value;
+      const depth = +document.getElementById("depth").value;
+      const color = document.getElementById("lightColor").value;
+      const alpha = +document.getElementById("lightAlpha").value;
+      const rgb = color.match(/\w\w/g).map(x => parseInt(x, 16));
 
-      const files = await extractFiles(input.files);
-      const zipOriginal = new JSZip();
-      const zipRelief = new JSZip();
+      pbrImages = [];
+      normalsOnly = [];
 
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const img = await loadImage(file);
-        const name = file.name.replace(/\.\w+$/, "");
-        const canvas = upscale(img);
+      for (let { name, img } of originalImages) {
+        const canvas = getRelief(img, angle, depth, rgb, alpha);
+        pbrImages.push({ name, canvas });
 
-        const normalMap = generateNormalMap(canvas);
-        const litCanvas = applyLighting(canvas, normalMap);
-
-        const blobOriginal = await new Promise(res => canvas.toBlob(res, "image/png"));
-        const blobRelief = await new Promise(res => litCanvas.toBlob(res, "image/png"));
-
-        zipOriginal.file(name + "_x4.png", blobOriginal);
-        zipRelief.file(name + "_relief.png", blobRelief);
-
-        progress.value = (i + 1) / files.length;
+        const normalMap = document.createElement("canvas");
+        normalMap.width = img.width;
+        normalMap.height = img.height;
+        const nctx = normalMap.getContext("2d");
+        nctx.filter = `contrast(200%) grayscale(100%) brightness(${100 + depth * 5}%)`;
+        nctx.drawImage(img, 0, 0);
+        normalsOnly.push({ name, canvas: normalMap });
       }
 
-      const zip1 = await zipOriginal.generateAsync({ type: "blob" });
-      const zip2 = await zipRelief.generateAsync({ type: "blob" });
+      // Mettre preview
+      ctx.clearRect(0, 0, 128, 128);
+      ctx.drawImage(pbrImages[0].canvas, 0, 0, 128, 128);
 
-      btnOriginal.disabled = false;
-      btnRelief.disabled = false;
+      document.getElementById("downloadModified").disabled = false;
+      document.getElementById("downloadOriginals").disabled = false;
+    };
 
-      btnOriginal.onclick = () => {
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(zip1);
-        link.download = "images_agrandies.zip";
-        link.click();
-      };
+    document.getElementById("downloadModified").onclick = () => {
+      const zip = new JSZip();
+      for (let { name, canvas } of pbrImages)
+        zip.file(name, canvas.toDataURL().split(",")[1], { base64: true });
+      zip.generateAsync({ type: "blob" }).then(b => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(b);
+        a.download = "images_PBR.zip";
+        a.click();
+      });
+    };
 
-      btnRelief.onclick = () => {
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(zip2);
-        link.download = "images_relief.zip";
-        link.click();
-      };
-
-      setTimeout(() => progress.style.display = "none", 2000);
+    document.getElementById("downloadOriginals").onclick = () => {
+      const zip = new JSZip();
+      for (let { name, canvas } of normalsOnly)
+        zip.file("normal_" + name, canvas.toDataURL().split(",")[1], { base64: true });
+      zip.generateAsync({ type: "blob" }).then(b => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(b);
+        a.download = "normal_maps.zip";
+        a.click();
+      });
     };
   </script>
 </body>
