@@ -1,175 +1,381 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="UTF-8">
-  <title>Convertisseur PBR</title>
-  <style>
-    body { font-family: sans-serif; background: #111; color: #eee; padding: 20px; }
-    input, button, select { margin: 5px 0; }
-    canvas { image-rendering: pixelated; }
-    .preview { display: flex; gap: 10px; margin: 10px 0; }
-    .bar { width: 100%; height: 10px; background: #444; margin: 10px 0; }
-    .fill { height: 100%; width: 0%; background: #0f0; }
-  </style>
+  <meta charset="UTF-8">
+  <title>Convertisseur PBR visuel (relief)</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.0/jszip.min.js"></script>
+  <style>
+    body {
+      background: #111;
+      color: white;
+      font-family: sans-serif;
+      text-align: center;
+      padding: 20px;
+    }
+    input[type="range"] {
+      width: 50%;
+    }
+    .controls {
+      display: none; /* Hidden until files are uploaded */
+      margin-top: 20px;
+      border: 1px solid #333;
+      padding: 15px;
+      border-radius: 8px;
+      max-width: 800px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .preview-container {
+      display: flex;
+      justify-content: space-around;
+      margin-top: 20px;
+    }
+    .preview-box {
+      border: 1px solid #444;
+      padding: 10px;
+      border-radius: 5px;
+    }
+  </style>
 </head>
 <body>
-  <h2>🖼️ Convertisseur PBR avec relief</h2>
+  <h1>🖼️ Convertisseur PBR visuel (relief appliqué)</h1>
+  <input type="file" id="input" multiple accept=".zip,image/*"><br><br>
+  <button id="uploadBtn">⬆️ Uploader les images</button><br><br>
 
-  <input type="file" id="zipInput" accept=".zip" />
-  <div class="bar"><div id="progressBar" class="fill"></div></div>
+  <progress id="uploadProgress" value="0" max="1" style="width:70%;display:none;"></progress><br><br>
 
-  <button id="startBtn" disabled>Commencer la conversion</button>
+  <div id="conversionControls" class="controls">
+    <h2>Paramètres de Conversion</h2>
+    ---
+    <h3>Direction de la Lumière</h3>
+    <div>
+      <label><input type="radio" name="lightDir" value="top-left" checked> Haut-Gauche</label>
+      <label><input type="radio" name="lightDir" value="top"> Haut</label>
+      <label><input type="radio" name="lightDir" value="top-right"> Haut-Droite</label>
+          </div><br>
 
-  <div>
-    <label>Direction de la lumière (angle°)</label><br>
-    <input type="range" id="lightDir" min="0" max="360" value="45">
-  </div>
+    <h3>Puissance du Relief</h3>
+    <input type="range" id="reliefPower" min="-10" max="10" value="0" step="0.1"><br><br>
 
-  <div>
-    <label>Intensité du relief</label><br>
-    <input type="range" id="depth" min="-10" max="10" value="0">
-  </div>
+    <h3>Couleur de la Lumière</h3>
+    <input type="color" id="lightColor" value="#FFFFFF"><br><br>
 
-  <div>
-    <label>Couleur de la lumière</label><br>
-    <input type="color" id="lightColor" value="#ffffff">
-  </div>
+    <h3>Transparence de la Lumière</h3>
+    <input type="range" id="lightTransparency" min="0" max="50" value="0" step="1"><br><br>
+    ---
+    <button id="start">⚙️ Commencer la conversion</button><br><br>
+  </div>
 
-  <div>
-    <label>Transparence lumière (%)</label><br>
-    <input type="range" id="lightAlpha" min="0" max="50" value="0">
-  </div>
+  <progress id="conversionProgress" value="0" max="1" style="width:70%;display:none;"></progress><br><br>
 
-  <h3>🔍 Aperçu avant-après</h3>
-  <div class="preview">
-    <img src="https://i.imgur.com/tGbaZCY.png" width="128" height="128" style="background:#000">
-    <canvas id="previewCanvas" width="128" height="128" style="background:#000"></canvas>
-  </div>
+  <div class="preview-container">
+    <div class="preview-box">
+      <h3>Original (Agrandie, Pixélisée)</h3>
+      <canvas id="originalPreview" width="200" height="200" style="border:1px solid #555;"></canvas>
+    </div>
+    <div class="preview-box">
+      <h3>Avec Relief</h3>
+      <canvas id="reliefPreview" width="200" height="200" style="border:1px solid #555;"></canvas>
+    </div>
+  </div><br>
 
-  <button id="downloadModified" disabled>Télécharger images PBR</button>
-  <button id="downloadOriginals" disabled>Télécharger normal maps seules</button>
+  <button id="download-original" disabled>📥 Télécharger images agrandies</button>
+  <button id="download-relief" disabled>📥 Télécharger images avec relief</button>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
-  <script>
-    const zipInput = document.getElementById('zipInput');
-    const progressBar = document.getElementById('progressBar');
-    const previewCanvas = document.getElementById('previewCanvas');
-    const ctx = previewCanvas.getContext('2d');
-    let originalImages = [];
-    let pbrImages = [];
-    let normalsOnly = [];
+  <script>
+    const input = document.getElementById("input");
+    const uploadBtn = document.getElementById("uploadBtn");
+    const uploadProgress = document.getElementById("uploadProgress");
+    const conversionControls = document.getElementById("conversionControls");
+    const startBtn = document.getElementById("start");
+    const conversionProgress = document.getElementById("conversionProgress");
+    const btnOriginal = document.getElementById("download-original");
+    const btnRelief = document.getElementById("download-relief");
 
-    const getRelief = (img, angleDeg, depth, lightCol, alpha) => {
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
-      canvas.width = img.width;
-      canvas.height = img.height;
-      ctx.drawImage(img, 0, 0);
+    const reliefPowerSlider = document.getElementById("reliefPower");
+    const lightColorPicker = document.getElementById("lightColor");
+    const lightTransparencySlider = document.getElementById("lightTransparency");
+    const lightDirectionRadios = document.querySelectorAll('input[name="lightDir"]');
 
-      const src = ctx.getImageData(0, 0, img.width, img.height);
-      const dst = ctx.createImageData(src);
-      const a = (angleDeg * Math.PI) / 180;
-      const lx = Math.cos(a), ly = Math.sin(a);
+    const originalPreviewCanvas = document.getElementById("originalPreview");
+    const reliefPreviewCanvas = document.getElementById("reliefPreview");
+    const originalPreviewCtx = originalPreviewCanvas.getContext("2d");
+    const reliefPreviewCtx = reliefPreviewCanvas.getContext("2d");
 
-      for (let y = 1; y < img.height - 1; y++) {
-        for (let x = 1; x < img.width - 1; x++) {
-          const i = (y * img.width + x) * 4;
-          const gx = ((src.data[i - 4] & 0xff) - (src.data[i + 4] & 0xff)) * depth;
-          const gy = ((src.data[i - img.width * 4] & 0xff) - (src.data[i + img.width * 4] & 0xff)) * depth;
-          let light = 128 + gx * lx + gy * ly;
-          light = Math.min(255, Math.max(0, light));
+    let uploadedFiles = [];
+    let currentPreviewImage = null; // Store the currently displayed preview image
 
-          dst.data[i] = (src.data[i] + lightCol[0] * light / 255) / 2;
-          dst.data[i + 1] = (src.data[i + 1] + lightCol[1] * light / 255) / 2;
-          dst.data[i + 2] = (src.data[i + 2] + lightCol[2] * light / 255) / 2;
-          dst.data[i + 3] = Math.max(0, src.data[i + 3] - alpha * 5);
-        }
-      }
+    // Helper functions (upscale, getLum, normalize remain the same)
+    function upscale(img, scale = 4) {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      const ctx = canvas.getContext("2d");
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      return canvas;
+    }
 
-      ctx.putImageData(dst, 0, 0);
-      return canvas;
-    };
+    function getLum(data, x, y, w) {
+      const i = (y * w + x) * 4;
+      return (data[i] + data[i+1] + data[i+2]) / 3 / 255;
+    }
 
-    zipInput.addEventListener("change", async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const zip = await JSZip.loadAsync(file);
-      let files = Object.values(zip.files).filter(f => /\.(png|jpg|jpeg)$/i.test(f.name));
-      progressBar.style.width = "0%";
-      let done = 0;
-      originalImages = [];
+    function normalize(v) {
+      const len = Math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+      return [v[0]/len, v[1]/len, v[2]/len];
+    }
 
-      for (let f of files) {
-        const blob = await f.async("blob");
-        const img = new Image();
-        const url = URL.createObjectURL(blob);
-        await new Promise(res => {
-          img.onload = () => {
-            originalImages.push({ name: f.name, img });
-            URL.revokeObjectURL(url);
-            progressBar.style.width = `${++done / files.length * 100}%`;
-            res();
-          };
-          img.src = url;
-        });
-      }
-      document.getElementById("startBtn").disabled = false;
-    });
+    function hexToRgb(hex) {
+      const bigint = parseInt(hex.slice(1), 16);
+      const r = (bigint >> 16) & 255;
+      const g = (bigint >> 8) & 255;
+      const b = bigint & 255;
+      return [r, g, b];
+    }
 
-    document.getElementById("startBtn").onclick = async () => {
-      const angle = +document.getElementById("lightDir").value;
-      const depth = +document.getElementById("depth").value;
-      const color = document.getElementById("lightColor").value;
-      const alpha = +document.getElementById("lightAlpha").value;
-      const rgb = color.match(/\w\w/g).map(x => parseInt(x, 16));
+    function generateNormalMap(canvas, reliefStrength = 1) {
+      const w = canvas.width, h = canvas.height;
+      const ctx = canvas.getContext("2d");
+      const src = ctx.getImageData(0, 0, w, h);
+      const dst = ctx.createImageData(w, h);
 
-      pbrImages = [];
-      normalsOnly = [];
+      for (let y = 1; y < h - 1; y++) {
+        for (let x = 1; x < w - 1; x++) {
+          const i = (y * w + x) * 4;
+          const alpha = src.data[i+3];
+          if (alpha < 10) {
+            dst.data.set([0,0,0,0], i);
+            continue;
+          }
 
-      for (let { name, img } of originalImages) {
-        const canvas = getRelief(img, angle, depth, rgb, alpha);
-        pbrImages.push({ name, canvas });
+          // Apply reliefStrength to dx and dy
+          const dx = (getLum(src.data, x+1, y, w) - getLum(src.data, x-1, y, w)) * reliefStrength;
+          const dy = (getLum(src.data, x, y+1, w) - getLum(src.data, x, y-1, w)) * reliefStrength;
+          const dz = 1; // Z component remains constant for a height map based normal map
+          const len = Math.sqrt(dx*dx + dy*dy + dz*dz);
+          const nx = dx/len, ny = dy/len, nz = dz/len;
 
-        const normalMap = document.createElement("canvas");
-        normalMap.width = img.width;
-        normalMap.height = img.height;
-        const nctx = normalMap.getContext("2d");
-        nctx.filter = `contrast(200%) grayscale(100%) brightness(${100 + depth * 5}%)`;
-        nctx.drawImage(img, 0, 0);
-        normalsOnly.push({ name, canvas: normalMap });
-      }
+          dst.data[i] = (nx * 0.5 + 0.5) * 255;
+          dst.data[i+1] = (ny * 0.5 + 0.5) * 255;
+          dst.data[i+2] = (nz * 0.5 + 0.5) * 255;
+          dst.data[i+3] = alpha;
+        }
+      }
+      return dst;
+    }
 
-      // Mettre preview
-      ctx.clearRect(0, 0, 128, 128);
-      ctx.drawImage(pbrImages[0].canvas, 0, 0, 128, 128);
+    function applyLighting(canvas, normalMapData, lightDir, lightColor, lightTransparency) {
+      const w = canvas.width, h = canvas.height;
+      const light = normalize(lightDir);
+      const [lr, lg, lb] = lightColor; // RGB components of light color
 
-      document.getElementById("downloadModified").disabled = false;
-      document.getElementById("downloadOriginals").disabled = false;
-    };
+      const offCanvas = document.createElement("canvas");
+      offCanvas.width = w;
+      offCanvas.height = h;
+      const offCtx = offCanvas.getContext("2d");
+      offCtx.drawImage(canvas, 0, 0);
+      const imgData = offCtx.getImageData(0, 0, w, h);
 
-    document.getElementById("downloadModified").onclick = () => {
-      const zip = new JSZip();
-      for (let { name, canvas } of pbrImages)
-        zip.file(name, canvas.toDataURL().split(",")[1], { base64: true });
-      zip.generateAsync({ type: "blob" }).then(b => {
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(b);
-        a.download = "images_PBR.zip";
-        a.click();
-      });
-    };
+      const transparencyFactor = (100 - lightTransparency) / 100; // 0 to 1, 1 being fully transparent (original color)
 
-    document.getElementById("downloadOriginals").onclick = () => {
-      const zip = new JSZip();
-      for (let { name, canvas } of normalsOnly)
-        zip.file("normal_" + name, canvas.toDataURL().split(",")[1], { base64: true });
-      zip.generateAsync({ type: "blob" }).then(b => {
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(b);
-        a.download = "normal_maps.zip";
-        a.click();
-      });
-    };
-  </script>
+      for (let i = 0; i < imgData.data.length; i += 4) {
+        const r = normalMapData.data[i];
+        const g = normalMapData.data[i + 1];
+        const b = normalMapData.data[i + 2];
+        const a = normalMapData.data[i + 3];
+
+        if (a < 10) continue;
+
+        const nx = r / 255 * 2 - 1;
+        const ny = g / 255 * 2 - 1;
+        const nz = b / 255 * 2 - 1;
+
+        const dot = Math.max(0, nx * light[0] + ny * light[1] + nz * light[2]); // Max 0 ensures no negative light
+
+        // Calculate ambient light (e.g., 20% of full light)
+        const ambient = 0.2;
+        const finalLightIntensity = Math.min(1, dot + ambient); // Clamp to 1
+
+        // Apply light color
+        const litR = imgData.data[i] * finalLightIntensity * (lr / 255);
+        const litG = imgData.data[i+1] * finalLightIntensity * (lg / 255);
+        const litB = imgData.data[i+2] * finalLightIntensity * (lb / 255);
+
+        // Blend with original color based on transparency
+        imgData.data[i] = imgData.data[i] * transparencyFactor + litR * (1 - transparencyFactor);
+        imgData.data[i+1] = imgData.data[i+1] * transparencyFactor + litG * (1 - transparencyFactor);
+        imgData.data[i+2] = imgData.data[i+2] * transparencyFactor + litB * (1 - transparencyFactor);
+      }
+
+      offCtx.putImageData(imgData, 0, 0);
+      return offCanvas;
+    }
+
+    async function extractFiles(fileList) {
+      let images = [];
+      let loadedCount = 0;
+      const totalFiles = fileList.length;
+
+      for (const file of fileList) {
+        if (file.name.endsWith(".zip")) {
+          const zip = await JSZip.loadAsync(file);
+          const entries = Object.values(zip.files).filter(f => !f.dir && /\.(png|jpe?g)$/i.test(f.name));
+          for (const entry of entries) {
+            const blob = await entry.async("blob");
+            images.push(new File([blob], entry.name, { type: blob.type }));
+            loadedCount++;
+            uploadProgress.value = loadedCount / totalFiles; // Update for ZIP content
+          }
+        } else if (file.type.startsWith("image/")) {
+          images.push(file);
+          loadedCount++;
+          uploadProgress.value = loadedCount / totalFiles;
+        }
+      }
+      return images.slice(0, 5000); // Limit to 5000 images
+    }
+
+    async function loadImage(file) {
+      return new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.src = URL.createObjectURL(file);
+      });
+    }
+
+    function getLightDirection() {
+      for (const radio of lightDirectionRadios) {
+        if (radio.checked) {
+          switch (radio.value) {
+            case 'top-left': return [-0.5, -0.5, 1];
+            case 'top': return [0, -0.5, 1];
+            case 'top-right': return [0.5, -0.5, 1];
+            // Add more cases for other directions
+            default: return [0, 0, 1]; // Default to straight on
+          }
+        }
+      }
+      return [0, 0, 1]; // Fallback
+    }
+
+    async function updatePreview() {
+      if (!currentPreviewImage) return;
+
+      const img = await loadImage(currentPreviewImage);
+      const upscaledCanvas = upscale(img);
+
+      // Original preview (pixelated, as requested)
+      originalPreviewCtx.clearRect(0, 0, originalPreviewCanvas.width, originalPreviewCanvas.height);
+      originalPreviewCtx.imageSmoothingEnabled = false;
+      originalPreviewCtx.drawImage(upscaledCanvas, 0, 0, originalPreviewCanvas.width, originalPreviewCanvas.height);
+
+      // Relief preview
+      const reliefStrength = parseFloat(reliefPowerSlider.value);
+      const normalMap = generateNormalMap(upscaledCanvas, reliefStrength);
+
+      const lightDir = getLightDirection();
+      const lightColor = hexToRgb(lightColorPicker.value);
+      const lightTransparency = parseFloat(lightTransparencySlider.value);
+
+      const litCanvas = applyLighting(upscaledCanvas, normalMap, lightDir, lightColor, lightTransparency);
+
+      reliefPreviewCtx.clearRect(0, 0, reliefPreviewCanvas.width, reliefPreviewCanvas.height);
+      reliefPreviewCtx.drawImage(litCanvas, 0, 0, reliefPreviewCanvas.width, reliefPreviewCanvas.width);
+    }
+
+    // Event Listeners for UI
+    input.onchange = () => {
+      uploadBtn.disabled = input.files.length === 0;
+      conversionControls.style.display = "none";
+      btnOriginal.disabled = true;
+      btnRelief.disabled = true;
+      uploadProgress.style.display = "none";
+      conversionProgress.style.display = "none";
+    };
+
+    uploadBtn.onclick = async () => {
+      if (!input.files.length) return alert("Ajoute des images ou un zip !");
+
+      uploadBtn.disabled = true;
+      uploadProgress.style.display = "block";
+      uploadProgress.value = 0;
+
+      uploadedFiles = await extractFiles(input.files);
+
+      if (uploadedFiles.length > 0) {
+        currentPreviewImage = uploadedFiles[Math.floor(Math.random() * uploadedFiles.length)];
+        updatePreview();
+        conversionControls.style.display = "block";
+      } else {
+        alert("Aucune image valide trouvée dans la sélection.");
+        conversionControls.style.display = "none";
+      }
+      uploadProgress.style.display = "none";
+    };
+
+    reliefPowerSlider.oninput = updatePreview;
+    lightColorPicker.oninput = updatePreview;
+    lightTransparencySlider.oninput = updatePreview;
+    lightDirectionRadios.forEach(radio => radio.onchange = updatePreview);
+
+
+    startBtn.onclick = async () => {
+      if (uploadedFiles.length === 0) return alert("Veuillez d'abord uploader des images.");
+     
+      startBtn.disabled = true;
+      conversionProgress.style.display = "block";
+      conversionProgress.value = 0;
+
+      const zipOriginal = new JSZip();
+      const zipRelief = new JSZip();
+
+      const reliefStrength = parseFloat(reliefPowerSlider.value);
+      const lightDir = getLightDirection();
+      const lightColor = hexToRgb(lightColorPicker.value);
+      const lightTransparency = parseFloat(lightTransparencySlider.value);
+
+      for (let i = 0; i < uploadedFiles.length; i++) {
+        const file = uploadedFiles[i];
+        const img = await loadImage(file);
+        const name = file.name.replace(/\.\w+$/, "");
+        const canvas = upscale(img);
+
+        const normalMap = generateNormalMap(canvas, reliefStrength);
+        const litCanvas = applyLighting(canvas, normalMap, lightDir, lightColor, lightTransparency);
+
+        const blobOriginal = await new Promise(res => canvas.toBlob(res, "image/png"));
+        const blobRelief = await new Promise(res => litCanvas.toBlob(res, "image/png"));
+
+        zipOriginal.file(name + "_x4.png", blobOriginal);
+        zipRelief.file(name + "_relief.png", blobRelief);
+
+        conversionProgress.value = (i + 1) / uploadedFiles.length;
+      }
+
+      const zip1 = await zipOriginal.generateAsync({ type: "blob" });
+      const zip2 = await zipRelief.generateAsync({ type: "blob" });
+
+      btnOriginal.disabled = false;
+      btnRelief.disabled = false;
+
+      btnOriginal.onclick = () => {
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(zip1);
+        link.download = "images_agrandies.zip";
+        link.click();
+      };
+
+      btnRelief.onclick = () => {
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(zip2);
+        link.download = "images_relief.zip";
+        link.click();
+      };
+
+      setTimeout(() => conversionProgress.style.display = "none", 2000);
+      startBtn.disabled = false;
+    };
+  </script>
 </body>
 </html>
