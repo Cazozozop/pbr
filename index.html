@@ -52,7 +52,13 @@
       <label><input type="radio" name="lightDir" value="top-left" checked> Haut-Gauche</label>
       <label><input type="radio" name="lightDir" value="top"> Haut</label>
       <label><input type="radio" name="lightDir" value="top-right"> Haut-Droite</label>
-          </div><br>
+      <label><input type="radio" name="lightDir" value="left"> Gauche</label>
+      <label><input type="radio" name="lightDir" value="center"> Centre</label>
+      <label><input type="radio" name="lightDir" value="right"> Droite</label>
+      <label><input type="radio" name="lightDir" value="bottom-left"> Bas-Gauche</label>
+      <label><input type="radio" name="lightDir" value="bottom"> Bas</label>
+      <label><input type="radio" name="lightDir" value="bottom-right"> Bas-Droite</label>
+    </div><br>
 
     <h3>Puissance du Relief</h3>
     <input type="range" id="reliefPower" min="-10" max="10" value="0" step="0.1"><br><br>
@@ -62,6 +68,10 @@
 
     <h3>Transparence de la Lumière</h3>
     <input type="range" id="lightTransparency" min="0" max="50" value="0" step="1"><br><br>
+    
+    <h3>Option de Texturisation</h3>
+    <label><input type="checkbox" id="enableTexturization"> Activer la texturisation</label><br><br>
+
     ---
     <button id="start">⚙️ Commencer la conversion</button><br><br>
   </div>
@@ -96,6 +106,7 @@
     const lightColorPicker = document.getElementById("lightColor");
     const lightTransparencySlider = document.getElementById("lightTransparency");
     const lightDirectionRadios = document.querySelectorAll('input[name="lightDir"]');
+    const enableTexturizationCheckbox = document.getElementById("enableTexturization");
 
     const originalPreviewCanvas = document.getElementById("originalPreview");
     const reliefPreviewCanvas = document.getElementById("reliefPreview");
@@ -152,7 +163,7 @@
           // Apply reliefStrength to dx and dy
           const dx = (getLum(src.data, x+1, y, w) - getLum(src.data, x-1, y, w)) * reliefStrength;
           const dy = (getLum(src.data, x, y+1, w) - getLum(src.data, x, y-1, w)) * reliefStrength;
-          const dz = 1; // Z component remains constant for a height map based normal map
+          const dz = 1; 
           const len = Math.sqrt(dx*dx + dy*dy + dz*dz);
           const nx = dx/len, ny = dy/len, nz = dz/len;
 
@@ -165,7 +176,7 @@
       return dst;
     }
 
-    function applyLighting(canvas, normalMapData, lightDir, lightColor, lightTransparency) {
+    function applyLighting(canvas, normalMapData, lightDir, lightColor, lightTransparency, enableTexturization, reliefStrength) {
       const w = canvas.width, h = canvas.height;
       const light = normalize(lightDir);
       const [lr, lg, lb] = lightColor; // RGB components of light color
@@ -187,11 +198,37 @@
 
         if (a < 10) continue;
 
-        const nx = r / 255 * 2 - 1;
-        const ny = g / 255 * 2 - 1;
-        const nz = b / 255 * 2 - 1;
+        let nx = r / 255 * 2 - 1;
+        let ny = g / 255 * 2 - 1;
+        let nz = b / 255 * 2 - 1;
 
-        const dot = Math.max(0, nx * light[0] + ny * light[1] + nz * light[2]); // Max 0 ensures no negative light
+        // Texturization logic
+        if (enableTexturization && Math.random() < 0.3) { // 30% of pixels
+          // Apply brightness change
+          const brightnessChange = (Math.random() * 10) - 5; // -5 to 5
+          imgData.data[i] = Math.min(255, Math.max(0, imgData.data[i] + brightnessChange));
+          imgData.data[i+1] = Math.min(255, Math.max(0, imgData.data[i+1] + brightnessChange));
+          imgData.data[i+2] = Math.min(255, Math.max(0, imgData.data[i+2] + brightnessChange));
+
+          // Apply lighter relief
+          const microReliefStrength = reliefStrength / 4;
+          const microDx = (Math.random() * 2 - 1) * microReliefStrength;
+          const microDy = (Math.random() * 2 - 1) * microReliefStrength;
+          const microDz = 1;
+          const microLen = Math.sqrt(microDx*microDx + microDy*microDy + microDz*microDz);
+          
+          // Blend original normal with micro normal
+          const blendedNx = (nx + microDx/microLen) / 2;
+          const blendedNy = (ny + microDy/microLen) / 2;
+          const blendedNz = (nz + microDz/microLen) / 2;
+          
+          const finalNormal = normalize([blendedNx, blendedNy, blendedNz]);
+          nx = finalNormal[0];
+          ny = finalNormal[1];
+          nz = finalNormal[2];
+        }
+
+        const dot = Math.max(0, nx * light[0] + ny * light[1] + nz * light[2]); 
 
         // Calculate ambient light (e.g., 20% of full light)
         const ambient = 0.2;
@@ -251,12 +288,17 @@
             case 'top-left': return [-0.5, -0.5, 1];
             case 'top': return [0, -0.5, 1];
             case 'top-right': return [0.5, -0.5, 1];
-            // Add more cases for other directions
-            default: return [0, 0, 1]; // Default to straight on
+            case 'left': return [-0.5, 0, 1];
+            case 'center': return [0, 0, 1]; // Straight on
+            case 'right': return [0.5, 0, 1];
+            case 'bottom-left': return [-0.5, 0.5, 1];
+            case 'bottom': return [0, 0.5, 1];
+            case 'bottom-right': return [0.5, 0.5, 1];
+            default: return [0, 0, 1]; 
           }
         }
       }
-      return [0, 0, 1]; // Fallback
+      return [0, 0, 1]; 
     }
 
     async function updatePreview() {
@@ -277,11 +319,12 @@
       const lightDir = getLightDirection();
       const lightColor = hexToRgb(lightColorPicker.value);
       const lightTransparency = parseFloat(lightTransparencySlider.value);
+      const enableTexturization = enableTexturizationCheckbox.checked;
 
-      const litCanvas = applyLighting(upscaledCanvas, normalMap, lightDir, lightColor, lightTransparency);
+      const litCanvas = applyLighting(upscaledCanvas, normalMap, lightDir, lightColor, lightTransparency, enableTexturization, reliefStrength);
 
       reliefPreviewCtx.clearRect(0, 0, reliefPreviewCanvas.width, reliefPreviewCanvas.height);
-      reliefPreviewCtx.drawImage(litCanvas, 0, 0, reliefPreviewCanvas.width, reliefPreviewCanvas.width);
+      reliefPreviewCtx.drawImage(litCanvas, 0, 0, reliefPreviewCanvas.width, reliefPreviewCanvas.height);
     }
 
     // Event Listeners for UI
@@ -292,6 +335,9 @@
       btnRelief.disabled = true;
       uploadProgress.style.display = "none";
       conversionProgress.style.display = "none";
+      originalPreviewCtx.clearRect(0, 0, originalPreviewCanvas.width, originalPreviewCanvas.height);
+      reliefPreviewCtx.clearRect(0, 0, reliefPreviewCanvas.width, reliefPreviewCanvas.height);
+      currentPreviewImage = null;
     };
 
     uploadBtn.onclick = async () => {
@@ -311,12 +357,14 @@
         alert("Aucune image valide trouvée dans la sélection.");
         conversionControls.style.display = "none";
       }
+      uploadBtn.disabled = false; // Re-enable upload button after processing
       uploadProgress.style.display = "none";
     };
 
     reliefPowerSlider.oninput = updatePreview;
     lightColorPicker.oninput = updatePreview;
     lightTransparencySlider.oninput = updatePreview;
+    enableTexturizationCheckbox.onchange = updatePreview; // Add listener for checkbox
     lightDirectionRadios.forEach(radio => radio.onchange = updatePreview);
 
 
@@ -334,6 +382,7 @@
       const lightDir = getLightDirection();
       const lightColor = hexToRgb(lightColorPicker.value);
       const lightTransparency = parseFloat(lightTransparencySlider.value);
+      const enableTexturization = enableTexturizationCheckbox.checked; // Get texturization state
 
       for (let i = 0; i < uploadedFiles.length; i++) {
         const file = uploadedFiles[i];
@@ -341,8 +390,11 @@
         const name = file.name.replace(/\.\w+$/, "");
         const canvas = upscale(img);
 
+        // Generate normal map for the base relief
         const normalMap = generateNormalMap(canvas, reliefStrength);
-        const litCanvas = applyLighting(canvas, normalMap, lightDir, lightColor, lightTransparency);
+        
+        // Apply lighting and texturization
+        const litCanvas = applyLighting(canvas, normalMap, lightDir, lightColor, lightTransparency, enableTexturization, reliefStrength);
 
         const blobOriginal = await new Promise(res => canvas.toBlob(res, "image/png"));
         const blobRelief = await new Promise(res => litCanvas.toBlob(res, "image/png"));
