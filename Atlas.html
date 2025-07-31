@@ -20,7 +20,7 @@
             align-items: center;
             padding: 20px;
             position: relative;
-            overflow: hidden;
+            overflow-x: hidden;
         }
 
         body::before {
@@ -205,6 +205,9 @@
             max-width: 100%;
             height: auto;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
         }
 
         .button-container {
@@ -285,37 +288,39 @@
         }
 
         .floating-particles {
-            position: absolute;
+            position: fixed;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
             pointer-events: none;
             overflow: hidden;
+            z-index: 0;
         }
 
         .particle {
             position: absolute;
-            width: 4px;
-            height: 4px;
-            background: rgba(255, 255, 255, 0.6);
+            width: 6px;
+            height: 6px;
+            background: radial-gradient(circle, rgba(255, 255, 255, 0.8) 0%, rgba(255, 255, 255, 0.3) 100%);
             border-radius: 50%;
-            animation: float 8s infinite linear;
+            animation: floatDown 6s infinite linear;
         }
 
-        @keyframes float {
+        @keyframes floatDown {
             0% {
-                transform: translateY(100vh) translateX(0) scale(0);
+                transform: translateY(-10px) translateX(0px) scale(0);
                 opacity: 0;
             }
             10% {
                 opacity: 1;
+                transform: scale(1);
             }
             90% {
                 opacity: 1;
             }
             100% {
-                transform: translateY(-10vh) translateX(100px) scale(1);
+                transform: translateY(100vh) translateX(50px) scale(0.5);
                 opacity: 0;
             }
         }
@@ -385,24 +390,30 @@
         // Création des particules flottantes
         function createParticles() {
             const particlesContainer = document.getElementById('particles');
-            for (let i = 0; i < 50; i++) {
+            
+            function addParticle() {
+                const particle = document.createElement('div');
+                particle.className = 'particle';
+                particle.style.left = Math.random() * 100 + '%';
+                particle.style.animationDelay = '0s';
+                particle.style.animationDuration = (Math.random() * 3 + 4) + 's';
+                particlesContainer.appendChild(particle);
+                
                 setTimeout(() => {
-                    const particle = document.createElement('div');
-                    particle.className = 'particle';
-                    particle.style.left = Math.random() * 100 + '%';
-                    particle.style.animationDelay = Math.random() * 8 + 's';
-                    particle.style.animationDuration = (Math.random() * 4 + 6) + 's';
-                    particlesContainer.appendChild(particle);
-                    
-                    setTimeout(() => {
+                    if (particle.parentNode) {
                         particle.remove();
-                    }, 12000);
-                }, i * 100);
+                    }
+                }, 8000);
+            }
+            
+            // Créer des particules à intervalles réguliers
+            for (let i = 0; i < 5; i++) {
+                setTimeout(addParticle, i * 300);
             }
         }
 
         // Lancer les particules régulièrement
-        setInterval(createParticles, 3000);
+        setInterval(createParticles, 2000);
         createParticles();
 
         let textureData = [];
@@ -419,6 +430,8 @@
             const file = event.target.files[0];
             if (!file) return;
 
+            console.log('Fichier sélectionné:', file.name, file.size, 'bytes');
+
             // Montrer la barre de progression
             const progressContainer = document.getElementById('progressContainer');
             const progressFill = document.getElementById('progressFill');
@@ -429,21 +442,40 @@
             progressText.textContent = 'Extraction du ZIP...';
 
             try {
+                console.log('Début de l\'extraction du ZIP...');
                 const zip = await JSZip.loadAsync(file);
+                console.log('ZIP chargé avec succès');
+                
                 const imageFiles = [];
                 
                 // Extraire les images du ZIP
-                for (const [filename, file] of Object.entries(zip.files)) {
-                    if (file.dir) continue;
+                let fileCount = 0;
+                for (const [filename, zipFile] of Object.entries(zip.files)) {
+                    if (zipFile.dir) continue;
                     
+                    console.log('Fichier trouvé:', filename);
                     const extension = filename.split('.').pop().toLowerCase();
-                    if (['png', 'jpg', 'jpeg', 'gif', 'bmp'].includes(extension)) {
-                        const blob = await file.async('blob');
-                        imageFiles.push({
-                            name: filename.split('/').pop().replace(/\.[^/.]+$/, ""),
-                            blob: blob
-                        });
+                    if (['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'].includes(extension)) {
+                        try {
+                            const blob = await zipFile.async('blob');
+                            const cleanName = filename.split('/').pop().replace(/\.[^/.]+$/, "");
+                            imageFiles.push({
+                                name: cleanName,
+                                blob: blob,
+                                originalName: filename
+                            });
+                            fileCount++;
+                            console.log('Image extraite:', cleanName);
+                        } catch (blobError) {
+                            console.error('Erreur lors de l\'extraction de', filename, ':', blobError);
+                        }
                     }
+                }
+
+                console.log('Total d\'images trouvées:', imageFiles.length);
+
+                if (imageFiles.length === 0) {
+                    throw new Error('Aucune image trouvée dans le ZIP');
                 }
 
                 // Trier par nom alphabétique
@@ -456,28 +488,46 @@
                 textureData = [];
                 for (let i = 0; i < imageFiles.length; i++) {
                     const imageFile = imageFiles[i];
-                    const img = await loadImage(imageFile.blob);
+                    console.log('Chargement de l\'image:', imageFile.name);
                     
-                    textureData.push({
-                        name: imageFile.name,
-                        image: img,
-                        x: i % MAX_WIDTH,
-                        y: Math.floor(i / MAX_WIDTH)
-                    });
-                    
-                    const progress = 25 + (i / imageFiles.length) * 50;
-                    progressFill.style.width = progress + '%';
-                    progressText.textContent = `Traitement: ${i + 1}/${imageFiles.length}`;
+                    try {
+                        const img = await loadImage(imageFile.blob);
+                        console.log('Image chargée:', imageFile.name, img.width + 'x' + img.height);
+                        
+                        textureData.push({
+                            name: imageFile.name,
+                            image: img,
+                            x: i % MAX_WIDTH,
+                            y: Math.floor(i / MAX_WIDTH)
+                        });
+                        
+                        const progress = 25 + (i / imageFiles.length) * 50;
+                        progressFill.style.width = progress + '%';
+                        progressText.textContent = `Traitement: ${i + 1}/${imageFiles.length}`;
+                        
+                        // Petite pause pour permettre à l'UI de se mettre à jour
+                        await new Promise(resolve => setTimeout(resolve, 10));
+                    } catch (imgError) {
+                        console.error('Erreur lors du chargement de l\'image', imageFile.name, ':', imgError);
+                    }
+                }
+
+                if (textureData.length === 0) {
+                    throw new Error('Aucune image n\'a pu être chargée');
                 }
 
                 progressFill.style.width = '75%';
                 progressText.textContent = 'Génération de l\'atlas...';
 
+                console.log('Génération de l\'atlas avec', textureData.length, 'textures');
+                
                 // Générer l'atlas
                 await generateAtlas();
                 
                 progressFill.style.width = '100%';
                 progressText.textContent = 'Terminé !';
+
+                console.log('Atlas généré avec succès');
 
                 // Activer les boutons avec animation
                 setTimeout(() => {
@@ -486,16 +536,28 @@
                 }, 300);
 
             } catch (error) {
-                console.error('Erreur lors du traitement:', error);
-                progressText.textContent = 'Erreur lors du traitement du fichier';
+                console.error('Erreur détaillée:', error);
+                progressText.textContent = 'Erreur: ' + error.message;
+                progressFill.style.width = '0%';
+                
+                // Afficher l'erreur pendant quelques secondes puis cacher la barre
+                setTimeout(() => {
+                    progressContainer.classList.remove('visible');
+                }, 3000);
             }
         }
 
         function loadImage(blob) {
             return new Promise((resolve, reject) => {
                 const img = new Image();
-                img.onload = () => resolve(img);
-                img.onerror = reject;
+                img.onload = () => {
+                    URL.revokeObjectURL(img.src);
+                    resolve(img);
+                };
+                img.onerror = (error) => {
+                    URL.revokeObjectURL(img.src);
+                    reject(new Error('Impossible de charger l\'image'));
+                };
                 img.src = URL.createObjectURL(blob);
             });
         }
@@ -503,9 +565,13 @@
         async function generateAtlas() {
             if (textureData.length === 0) return;
 
+            console.log('Génération de l\'atlas pour', textureData.length, 'textures');
+
             const rows = Math.ceil(textureData.length / MAX_WIDTH);
             const canvasWidth = Math.min(textureData.length, MAX_WIDTH) * TILE_SIZE;
             const canvasHeight = rows * TILE_SIZE;
+
+            console.log('Dimensions de l\'atlas:', canvasWidth + 'x' + canvasHeight);
 
             atlasCanvas.width = canvasWidth;
             atlasCanvas.height = canvasHeight;
@@ -516,16 +582,33 @@
             ctx.webkitImageSmoothingEnabled = false;
             ctx.msImageSmoothingEnabled = false;
 
+            // Remplir le fond en transparent
+            ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
             // Dessiner chaque texture
             for (const texture of textureData) {
                 const x = texture.x * TILE_SIZE;
                 const y = texture.y * TILE_SIZE;
                 
-                ctx.drawImage(texture.image, x, y, TILE_SIZE, TILE_SIZE);
+                console.log('Dessin de', texture.name, 'à la position', x, y);
+                
+                try {
+                    ctx.drawImage(texture.image, x, y, TILE_SIZE, TILE_SIZE);
+                } catch (drawError) {
+                    console.error('Erreur lors du dessin de', texture.name, ':', drawError);
+                }
             }
+
+            console.log('Atlas dessiné, affichage du canvas');
 
             // Afficher le canvas
             document.getElementById('canvasContainer').classList.add('visible');
+            
+            // S'assurer que le canvas est visible et stylé
+            atlasCanvas.style.display = 'block';
+            atlasCanvas.style.imageRendering = 'pixelated';
+            atlasCanvas.style.imageRendering = '-moz-crisp-edges';
+            atlasCanvas.style.imageRendering = 'crisp-edges';
         }
 
         // Bouton de téléchargement de l'atlas
