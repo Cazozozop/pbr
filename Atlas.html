@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Générateur d'Atlas de Textures</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        body::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grain" patternUnits="userSpaceOnUse" width="100" height="100"><circle cx="25" cy="25" r="1" fill="white" opacity="0.1"/><circle cx="75" cy="75" r="1" fill="white" opacity="0.1"/><circle cx="50" cy="10" r="0.5" fill="white" opacity="0.05"/><circle cx="90" cy="40" r="0.5" fill="white" opacity="0.05"/></pattern></defs><rect width="100" height="100" fill="url(%23grain)"/></svg>');
+            pointer-events: none;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(20px);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            max-width: 800px;
+            width: 100%;
+            z-index: 1;
+            animation: fadeInUp 0.8s ease-out;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        h1 {
+            text-align: center;
+            color: white;
+            font-size: 2.5em;
+            margin-bottom: 30px;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            background: linear-gradient(45deg, #fff, #f0f0f0);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .upload-area {
+            border: 3px dashed rgba(255, 255, 255, 0.3);
+            border-radius: 15px;
+            padding: 60px 40px;
+            text-align: center;
+            margin-bottom: 30px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .upload-area::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+            transform: rotate(45deg);
+            transition: all 0.6s ease;
+            opacity: 0;
+        }
+
+        .upload-area:hover::before {
+            animation: shimmer 1.5s ease-out;
+        }
+
+        @keyframes shimmer {
+            0% { transform: translateX(-100%) translateY(-100%) rotate(45deg); opacity: 0; }
+            50% { opacity: 1; }
+            100% { transform: translateX(100%) translateY(100%) rotate(45deg); opacity: 0; }
+        }
+
+        .upload-area:hover {
+            border-color: rgba(255, 255, 255, 0.6);
+            background: rgba(255, 255, 255, 0.05);
+            transform: translateY(-2px);
+        }
+
+        .upload-icon {
+            font-size: 4em;
+            color: rgba(255, 255, 255, 0.7);
+            margin-bottom: 20px;
+            display: block;
+        }
+
+        .upload-text {
+            color: white;
+            font-size: 1.2em;
+            margin-bottom: 10px;
+        }
+
+        .upload-subtext {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.9em;
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        .progress-container {
+            margin: 30px 0;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: all 0.5s ease;
+        }
+
+        .progress-container.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%);
+            border-radius: 10px;
+            width: 0%;
+            transition: width 0.3s ease;
+            position: relative;
+        }
+
+        .progress-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+            animation: progressShine 2s infinite;
+        }
+
+        @keyframes progressShine {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        .progress-text {
+            text-align: center;
+            color: white;
+            margin-top: 10px;
+            font-size: 0.9em;
+        }
+
+        .canvas-container {
+            margin: 30px 0;
+            text-align: center;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: all 0.5s ease;
+        }
+
+        .canvas-container.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        #atlasCanvas {
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 10px;
+            max-width: 100%;
+            height: auto;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        .button-container {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-top: 30px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 50px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            position: relative;
+            overflow: hidden;
+            opacity: 0.5;
+            transform: scale(0.9);
+            pointer-events: none;
+        }
+
+        .btn.enabled {
+            opacity: 1;
+            transform: scale(1);
+            pointer-events: auto;
+            animation: enablePulse 0.6s ease-out;
+        }
+
+        @keyframes enablePulse {
+            0% { transform: scale(0.9); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+
+        .btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .btn:hover::before {
+            left: 100%;
+        }
+
+        .btn-download {
+            background: linear-gradient(45deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            box-shadow: 0 10px 20px rgba(79, 172, 254, 0.3);
+        }
+
+        .btn-download:hover {
+            transform: translateY(-2px) scale(1.02);
+            box-shadow: 0 15px 30px rgba(79, 172, 254, 0.4);
+        }
+
+        .btn-coords {
+            background: linear-gradient(45deg, #fa709a 0%, #fee140 100%);
+            color: white;
+            box-shadow: 0 10px 20px rgba(250, 112, 154, 0.3);
+        }
+
+        .btn-coords:hover {
+            transform: translateY(-2px) scale(1.02);
+            box-shadow: 0 15px 30px rgba(250, 112, 154, 0.4);
+        }
+
+        .floating-particles {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            overflow: hidden;
+        }
+
+        .particle {
+            position: absolute;
+            width: 4px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.6);
+            border-radius: 50%;
+            animation: float 8s infinite linear;
+        }
+
+        @keyframes float {
+            0% {
+                transform: translateY(100vh) translateX(0) scale(0);
+                opacity: 0;
+            }
+            10% {
+                opacity: 1;
+            }
+            90% {
+                opacity: 1;
+            }
+            100% {
+                transform: translateY(-10vh) translateX(100px) scale(1);
+                opacity: 0;
+            }
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 20px;
+                margin: 10px;
+            }
+
+            h1 {
+                font-size: 2em;
+            }
+
+            .upload-area {
+                padding: 40px 20px;
+            }
+
+            .button-container {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .btn {
+                width: 100%;
+                max-width: 280px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="floating-particles" id="particles"></div>
+    
+    <div class="container">
+        <h1>🎨 Générateur d'Atlas de Textures</h1>
+        
+        <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+            <div class="upload-icon">📁</div>
+            <div class="upload-text">Cliquez pour importer vos textures</div>
+            <div class="upload-subtext">Fichiers ZIP acceptés</div>
+            <input type="file" id="fileInput" accept=".zip" />
+        </div>
+
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="progress-text" id="progressText">Traitement en cours...</div>
+        </div>
+
+        <div class="canvas-container" id="canvasContainer">
+            <canvas id="atlasCanvas"></canvas>
+        </div>
+
+        <div class="button-container">
+            <button class="btn btn-download" id="downloadBtn">
+                ⬇️ Télécharger l'Atlas
+            </button>
+            <button class="btn btn-coords" id="coordsBtn">
+                📄 Télécharger les Coordonnées
+            </button>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script>
+        // Création des particules flottantes
+        function createParticles() {
+            const particlesContainer = document.getElementById('particles');
+            for (let i = 0; i < 50; i++) {
+                setTimeout(() => {
+                    const particle = document.createElement('div');
+                    particle.className = 'particle';
+                    particle.style.left = Math.random() * 100 + '%';
+                    particle.style.animationDelay = Math.random() * 8 + 's';
+                    particle.style.animationDuration = (Math.random() * 4 + 6) + 's';
+                    particlesContainer.appendChild(particle);
+                    
+                    setTimeout(() => {
+                        particle.remove();
+                    }, 12000);
+                }, i * 100);
+            }
+        }
+
+        // Lancer les particules régulièrement
+        setInterval(createParticles, 3000);
+        createParticles();
+
+        let textureData = [];
+        let atlasCanvas = document.getElementById('atlasCanvas');
+        let ctx = atlasCanvas.getContext('2d');
+        
+        // Configuration
+        const MAX_WIDTH = 64; // Maximum 64 images par ligne
+        const TILE_SIZE = 64; // Taille de chaque texture pixelisée
+
+        document.getElementById('fileInput').addEventListener('change', handleFileUpload);
+
+        async function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // Montrer la barre de progression
+            const progressContainer = document.getElementById('progressContainer');
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            
+            progressContainer.classList.add('visible');
+            progressFill.style.width = '0%';
+            progressText.textContent = 'Extraction du ZIP...';
+
+            try {
+                const zip = await JSZip.loadAsync(file);
+                const imageFiles = [];
+                
+                // Extraire les images du ZIP
+                for (const [filename, file] of Object.entries(zip.files)) {
+                    if (file.dir) continue;
+                    
+                    const extension = filename.split('.').pop().toLowerCase();
+                    if (['png', 'jpg', 'jpeg', 'gif', 'bmp'].includes(extension)) {
+                        const blob = await file.async('blob');
+                        imageFiles.push({
+                            name: filename.split('/').pop().replace(/\.[^/.]+$/, ""),
+                            blob: blob
+                        });
+                    }
+                }
+
+                // Trier par nom alphabétique
+                imageFiles.sort((a, b) => a.name.localeCompare(b.name));
+
+                progressFill.style.width = '25%';
+                progressText.textContent = `${imageFiles.length} textures trouvées, traitement...`;
+
+                // Charger et traiter les images
+                textureData = [];
+                for (let i = 0; i < imageFiles.length; i++) {
+                    const imageFile = imageFiles[i];
+                    const img = await loadImage(imageFile.blob);
+                    
+                    textureData.push({
+                        name: imageFile.name,
+                        image: img,
+                        x: i % MAX_WIDTH,
+                        y: Math.floor(i / MAX_WIDTH)
+                    });
+                    
+                    const progress = 25 + (i / imageFiles.length) * 50;
+                    progressFill.style.width = progress + '%';
+                    progressText.textContent = `Traitement: ${i + 1}/${imageFiles.length}`;
+                }
+
+                progressFill.style.width = '75%';
+                progressText.textContent = 'Génération de l\'atlas...';
+
+                // Générer l'atlas
+                await generateAtlas();
+                
+                progressFill.style.width = '100%';
+                progressText.textContent = 'Terminé !';
+
+                // Activer les boutons avec animation
+                setTimeout(() => {
+                    document.getElementById('downloadBtn').classList.add('enabled');
+                    document.getElementById('coordsBtn').classList.add('enabled');
+                }, 300);
+
+            } catch (error) {
+                console.error('Erreur lors du traitement:', error);
+                progressText.textContent = 'Erreur lors du traitement du fichier';
+            }
+        }
+
+        function loadImage(blob) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = reject;
+                img.src = URL.createObjectURL(blob);
+            });
+        }
+
+        async function generateAtlas() {
+            if (textureData.length === 0) return;
+
+            const rows = Math.ceil(textureData.length / MAX_WIDTH);
+            const canvasWidth = Math.min(textureData.length, MAX_WIDTH) * TILE_SIZE;
+            const canvasHeight = rows * TILE_SIZE;
+
+            atlasCanvas.width = canvasWidth;
+            atlasCanvas.height = canvasHeight;
+
+            // Désactiver l'antialiasing pour un rendu pixelisé
+            ctx.imageSmoothingEnabled = false;
+            ctx.mozImageSmoothingEnabled = false;
+            ctx.webkitImageSmoothingEnabled = false;
+            ctx.msImageSmoothingEnabled = false;
+
+            // Dessiner chaque texture
+            for (const texture of textureData) {
+                const x = texture.x * TILE_SIZE;
+                const y = texture.y * TILE_SIZE;
+                
+                ctx.drawImage(texture.image, x, y, TILE_SIZE, TILE_SIZE);
+            }
+
+            // Afficher le canvas
+            document.getElementById('canvasContainer').classList.add('visible');
+        }
+
+        // Bouton de téléchargement de l'atlas
+        document.getElementById('downloadBtn').addEventListener('click', function() {
+            if (!this.classList.contains('enabled')) return;
+            
+            atlasCanvas.toBlob(function(blob) {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'texture_atlas.png';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            });
+        });
+
+        // Bouton de téléchargement des coordonnées
+        document.getElementById('coordsBtn').addEventListener('click', function() {
+            if (!this.classList.contains('enabled')) return;
+            
+            let coordsText = '';
+            for (const texture of textureData) {
+                coordsText += `${texture.name}: ${texture.x} / ${texture.y}\n`;
+            }
+            
+            const blob = new Blob([coordsText], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'coordinates.txt';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+    </script>
+</body>
+</html>
